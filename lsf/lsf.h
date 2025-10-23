@@ -299,6 +299,7 @@ enum orderType {INCR, DECR, NA};
 #define RESF_EXTERNAL    0x10
 #define RESF_RELEASE     0x20
 #define RESF_DEFINED_IN_RESOURCEMAP  0x40
+#define RESF_BATCH       0x80   /*The resouces take effect in batch side*/
 
 struct resItem {
     char name[MAXLSFNAMELEN];
