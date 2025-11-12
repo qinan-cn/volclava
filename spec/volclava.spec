@@ -20,7 +20,7 @@
 
 %define major 2
 %define minor 1
-%define release 0
+%define release 1
 %define build_timestamp %(date +"%Y%m%d")
 
 %define version %{major}.%{minor}
@@ -52,7 +52,7 @@ Summary: volclava Distributed Batch Scheduler
 Name: volclava
 Version: %{version}
 # Release: 0.b.%{build_timestamp}
-Release: 0.b.20250616
+Release: %{release}.20251116
 License: GPLv2
 Group: Applications/Productivity
 Vendor: volclava foundation
@@ -456,6 +456,10 @@ fi
 %dir %attr(0755,%{VOLCADMIN},%{VOLCADMIN}) %{_volclavatop}/work/logdir
 
 %changelog
+* Sun Nov 16 2025 Releasing volclava 2.1.1 by Bytedance Ltd. and/or its affiliates
+- support sorting hosts for job scheduling via order[slots];
+- enhance mixed-OS deployment installation to maintain compatibility with single-platform mode;
+- fix volclava script error on Ubuntu;
 * Mon Sep 12 2025 Releasing volclava 2.1.0 by Bytedance Ltd. and/or its affiliates
 - support adding comments to badmin operations;
 - JOB_SPOOL_DIR supports the %U dynamic pattern format;
