@@ -84,10 +84,10 @@ function pre_setup() {
     fi
 
     #install compile library
-    if [ "$OS_NAME" = "Rocky Linux" ]; then
+    if [ "$OS_NAME" = "rocky" ]; then
         yum install -y ncurses-devel tcl tcl-devel libtirpc libtirpc-devel libnsl2-devel    
         yum groupinstall -y "Development Tools"
-    elif [ "$OS_NAME" = "Ubuntu" ]; then
+    elif [ "$OS_NAME" = "ubuntu" ]; then
         apt update
         apt install -y build-essential automake tcl-dev libncurses-dev debhelper
     else #CentOS
@@ -96,38 +96,24 @@ function pre_setup() {
     fi
 
     #close firewall
-    if [ "$OS_NAME" != "Ubuntu" ]; then 
+    if [ "$OS_NAME" != "ubuntu" ]; then 
         systemctl stop firewalld
         systemctl disable firewalld
     fi
 }
 
 function post_setup() {
-    #rpm way doesn't need post setup, rpm already setup service and shell environment
-    if [ "$TYPE" = "rpm" -a "$PHASE" = "all" ]; then
-        return
-    fi
+    #rpm/deb way don't need post setup on master, they already setup service and shell environment
 
-    #set up volclava service and shell environment
-    if [ "$TYPE" = "deb" ] && [ $SET_PREFIX -ne 0 ]; then
-        cp --backup=numbered $PREFIX/lib/systemd/system/volclava.service /lib/systemd/system/volclava.service
-        chmod 644 /lib/systemd/system/volclava.service
-        cp --backup=numbered $PREFIX/etc/init.d/volclava /etc/init.d/volclava
-        chmod 755 /etc/init.d/volclava
-
-        systemctl daemon-reload
-
-	ln -sf $PREFIX/etc/profile.d/volclava.csh /etc/profile.d/volclava.csh
-	ln -sf $PREFIX/etc/profile.d/volclava.sh /etc/profile.d/volclava.sh
-    else
+    if [[ "$PHASE" != "all" || ("$PHASE" == "all" && "$TYPE" == "code") ]]; then
         cp --backup=numbered $PREFIX/etc/volclava /etc/init.d/
-	ln -sf $PREFIX/etc/volclava.csh /etc/profile.d/volclava.csh
-	ln -sf $PREFIX/etc/volclava.sh /etc/profile.d/volclava.sh
+        ln -sf $PREFIX/etc/volclava.csh /etc/profile.d/volclava.csh
+        ln -sf $PREFIX/etc/volclava.sh /etc/profile.d/volclava.sh
     fi
-
 
     # configure the lava service to start at boot
-    if [ "$OS_NAME" == "Ubuntu" ]; then
+    if [ "$OS_NAME" == "ubuntu" ]; then
+       systemctl daemon-reload
        /lib/systemd/systemd-sysv-install enable volclava
     else
        chkconfig --add volclava
@@ -469,6 +455,7 @@ fi
 #PREFIX
 if [[ "$SET_PREFIX" == 0 && -n "$VOLC_PREFIX" ]]; then
     PREFIX=$VOLC_PREFIX
+    SET_PREFIX=1
 fi
 #VOLCADMIN
 if [ -n "$VOLC_ADMIN" ]; then
@@ -492,6 +479,17 @@ fi
 if [[ "$VOLC_MIX_OS_MODE" == "Y" || "$VOLC_MIX_OS_MODE" == "y" ]]; then
     MIX_OS_MODE=1
 fi
+
+if [[ "$VOLC_MIX_OS_MODE" == "Y" && ("$TYPE" == "rpm" || "$TYPE" == "deb") ]]; then
+    echo "Volclava does not support multi-platform installation via RPM or DEB packages. Please set VOLC_MIX_OS_MODE=N in install.conf and try again."
+    exit 1    
+fi
+
+if [[ "$TYPE" == "deb" && $SET_PREFIX == 1 ]]; then
+    echo "Currently, installing Volclava via deb package does not support specifying a custom prefix. Please check the prefix settings in the command-line arguments or installation config file."
+    exit 1
+fi
+
 #MIX_OS_FOLDER
 if [ -n "$VOLC_MIX_OS_FOLDER" ]; then
     MIX_OS_FOLDER=$VOLC_MIX_OS_FOLDER

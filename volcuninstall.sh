@@ -103,6 +103,7 @@ fi
 
 rm -f /etc/init.d/volclava* > /dev/null 2>&1 || true
 rm -f /etc/profile.d/volclava.* > /dev/null 2>&1 || true
+systemctl daemon-reload > /dev/null 2>&1 || true
 
 if [[ -n ${MIX_OS_FOLDER} ]]; then
     DIR_COUNT=$(find "${VOLC_TOP}/${MIX_OS_FOLDER}" -maxdepth 1 -mindepth 1 | wc -l)
