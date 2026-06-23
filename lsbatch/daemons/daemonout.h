@@ -70,8 +70,9 @@ typedef enum {
     BATCH_JOB_FORCE      = 37,
     BATCH_UNUSED_38      = 38,
     BATCH_UNUSED_39      = 39,
-    BATCH_STATUS_CHUNK   = 40,       
+    BATCH_STATUS_CHUNK   = 40,
     BATCH_JOB_SUB_PACK    = 41,
+    BATCH_RSRC_LIMIT_INFO  = 42,
     BATCH_SET_JOB_ATTR   = 90,
     READY_FOR_OP         = 1023,
     PREPARE_FOR_OP       = 1024,
@@ -249,6 +250,8 @@ struct jobInfoReply {
     char      *effeResReq;
     int       maxMem;
     int       avgMem;
+    struct    limitDetailEnt *limitDetailTb;
+    int       numLimitDetail;
 };
 
 struct infoReq {
@@ -282,7 +285,7 @@ struct hostDataReply {
 };
 
 struct groupInfoReply {
-    int  numGroups;                   
+    int  numGroups;
     struct groupInfoEnt *groups;
 };
 
