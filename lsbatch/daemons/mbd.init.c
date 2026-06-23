@@ -19,6 +19,7 @@
 
 #include "mbd.h"
 #include "mbd.fairshare.h"
+#include "mbd.rsrclimit.h"
 #include "../../lsf/lib/lsi18n.h"
 #define NL_SETN         10
 
@@ -180,6 +181,7 @@ minit(int mbdInitFlags)
     qDataList = (struct qData *)listCreate("Queue List");
     h_initTab_(&jobMergedResReqTab, 1023);
     h_initTab_(&jobEffeResReqTab, 1023);
+    initRlData();
 
     /* who am I...
      */
@@ -300,6 +302,7 @@ minit(int mbdInitFlags)
     copyUserGroups();
     updUserList(mbdInitFlags);
     updQueueList();
+    TIMEIT(0, readRsrcLimitConf(mbdInitFlags), "minit_readRsrcLimitConf"); /*need after host/queue/usergroup configuration done*/
 
     if (chanInit_() < 0) {
         ls_syslog(LOG_ERR, "\
@@ -471,6 +474,7 @@ initHData(struct hData *hData)
     hData->pxyRsvJL = NULL;
     hData->leftRusageMem = INFINIT_LOAD;
     hData->actionComment = NULL;
+    hData->rlBitmap = NULL;
 
     return hData;
 }
@@ -1256,7 +1260,7 @@ static void
 parseGroups (int groupType, struct gData **group, char *line, char *filename)
 {
     static char fname[] = "parseGroups";
-    char *word, *groupName, *grpSl = NULL;
+    char *word, *grpSl = NULL;
     int lastChar, i;
     struct group *unixGrp;
     struct gData *gp, *mygp = NULL;
@@ -1270,11 +1274,6 @@ parseGroups (int groupType, struct gData **group, char *line, char *filename)
     mygp->numGroups = 0;
     for (i = 0; i <MAX_GROUPS; i++)
         mygp->gPtr[i] = NULL;
-
-    if (groupType == USER_GRP)
-        groupName = "User/User";
-    else
-        groupName = "Host/Host";
 
     while ((word = getNextWord_(&line)) != NULL) {
         if (isInGrp (word, mygp)) {
@@ -1541,6 +1540,8 @@ initQData (void)
     qPtr->fsFactors.runTimeFactor = -1;
     qPtr->fsFactors.runJobFactor = -1;
     qPtr->fsFactors.histHours = -1;
+    qPtr->actionComment = NULL;
+    qPtr->rlBitmap = NULL;
 
     return qPtr;
 }
@@ -3017,7 +3018,8 @@ updHostList(void)
 
     hostList = listCreate("Host List");
 
-    cc = 0;
+    /* hostId starts at 1; reserve 0 for "all hosts" in reasonTb */
+    cc = 1;
     for (e = h_firstEnt_(&hostTab, &stab);
          e != NULL;
          e = h_nextEnt_(&stab)) {

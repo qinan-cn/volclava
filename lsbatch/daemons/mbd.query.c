@@ -428,6 +428,10 @@ static void* processRequest(void* arg) {
             case BATCH_RESOURCE_INFO:
                 ret = do_resourceInfoReq(reqContext->xdr, reqContext->client->chanfd, &reqContext->client->from, &reqContext->reqHdr);
                 break;
+
+            case BATCH_RSRC_LIMIT_INFO:
+                ret = do_rsrcLimitInfoReq(reqContext->xdr, reqContext->client->chanfd, &reqContext->client->from, &reqContext->reqHdr);
+                break;
             
             case BATCH_JOB_PEEK:
                 if (getsockname(chanSock_(reqContext->client->chanfd),
