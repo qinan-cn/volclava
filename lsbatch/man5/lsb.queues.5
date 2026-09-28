@@ -600,6 +600,46 @@ overrides JOB_ACCEPT_INTERVAL set at the cluster level
 .PP
 Undefined (the queue uses JOB_ACCEPT_INTERVAL defined in 
 lsb.params, which has a default value of 1).
+.SH JOB_IDLE
+.BR
+.PP
+.SS Syntax
+.BR
+.PP
+.PP
+\fBJOB_IDLE = \fR\fInumber\fR
+.SS Description
+.BR
+.PP
+.PP
+Enables the calculation of the IDLE_FACTOR (idle factor) for jobs
+submitted to this queue, and specifies the threshold for idle job
+exception detection.
+.PP
+The idle factor is defined as:
+.PP
+IDLE_FACTOR = (CPU time / n) / run time
+.PP
+where CPU time is the accumulated CPU time of the job, n is the
+number of slots requested by the job, and run time is the elapsed
+run time of the job. A value close to 0 means the job is occupying
+job slots without using much CPU; a value close to 1 means high CPU
+utilization.
+.PP
+The value must be a number between 0.0 and 1.0. If the idle factor
+of a running job falls below this threshold, a job idle exception
+is triggered. Use together with DETECT_IDLE_JOB_AFTER in
+lsb.params to enable idle job exception handling; LSF_SERVERDIR/eadmin
+is called when the exception is triggered.
+.PP
+When JOB_IDLE is configured for a queue, the \fBbqueues -l\fR
+command displays the threshold in the JOB EXCEPTION PARAMETERS
+section.
+.SS Default
+.BR
+.PP
+.PP
+Undefined (-1.0; the idle factor is not calculated for the queue).
 .SH JOB_CONTROLS
 .BR
 .PP

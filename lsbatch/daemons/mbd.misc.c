@@ -149,6 +149,11 @@ updCounters (struct jData *jData, int oldStatus, time_t eventTime)
         case JOB_STAT_EXIT:
         case JOB_STAT_DONE:
 
+            if (jData->jFlags & JFLAG_COUNTED_IDLE) {
+                jData->jFlags &= ~JFLAG_COUNTED_IDLE;
+                jData->qPtr->numIdleJobs--;
+            }
+
             if (eventTime == LOG_IT) {
                 accumHistCpuTime(jData);
                 detachedJobFromFSTree(jData, "updCounters()/job ended");
@@ -1316,6 +1321,9 @@ checkParams (struct infoReq *req, struct parameterInfo *reply)
     reply->runTimeFactor = runTimeFactor;
     reply->runJobFactor = runJobFactor;
     reply->histHours = histHours;
+    reply->detectIdleJobAfter = detectIdleJobAfter;
+    reply->eadminTriggerDuration = eadminTriggerDuration;
+    reply->eadminTriggerInterval = eadminTriggerInterval;
 }
 
 void

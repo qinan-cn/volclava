@@ -268,6 +268,17 @@ printLong (struct parameterInfo *reply)
 
     printf("%s:\n", I18N(2459, "The number of hours of resource consumption history:")); /* catgets 2459 */
     printf("    %s = %f\n\n", "HIST_HOURS", reply->runJobFactor);
+
+    if (reply->detectIdleJobAfter > 0 && reply->detectIdleJobAfter != INFINIT_INT) {
+        printf("%s:\n", I18N(2460, "The minimum run time in minutes before mbatchd checks and reports idle jobs"));
+        printf("    %s = %d %s\n\n", "DETECT_IDLE_JOB_AFTER", reply->detectIdleJobAfter, I18N_minutes);
+    }
+
+    printf("%s:\n", I18N(2461, "The interval in minutes to re-trigger the eadmin script during a job exception"));
+    printf("    %s = %d %s\n\n", "EADMIN_TRIGGER_DURATION", reply->eadminTriggerDuration, I18N_minutes);
+
+    printf("%s:\n", I18N(2462, "The interval in minutes at which mbatchd calls the eadmin script, even if no job exception occurs"));
+    printf("    %s = %d %s\n\n", "EADMIN_TRIGGER_INTERVAL", reply->eadminTriggerInterval, I18N_minutes);
 } 
 
 

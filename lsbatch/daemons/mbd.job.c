@@ -21,7 +21,9 @@
 #include "mbd.query.h"
 #include "mbd.fairshare.h"
 #include "mbd.rsrclimit.h"
+#include "../../lsf/lib/mls.h"
 #include <pthread.h>
+#include <limits.h>
 
 #define NL_SETN         10
 
@@ -61,6 +63,7 @@ static void          reorderSJL1(struct jData *);
 static int           matchJobStatus(int, int);
 static double        acumulateValue(double, double);
 static void          accumulateRU(struct jData *, struct statusReq *);
+static void          updIdleFactor(struct jData *, time_t);
 static int           checkJobParams(struct jData *, struct submitReq *,
                                     struct submitMbdReply *, struct lsfAuth *);
 static int           checkJobPendLimit(struct jData *, struct lsfAuth *, char *, int);
@@ -3609,6 +3612,14 @@ rusageJob (struct statusReq *statusReq, struct hostent *hp)
 
     copyJUsage(&(jpbw->runRusage), &(statusReq->runRusage));
 
+    {
+        time_t runTime = jpbw->runTime;
+
+        if (jpbw->jStatus & JOB_STAT_RUN)
+            runTime += now - jpbw->updStateTime;
+        updIdleFactor(jpbw, runTime);
+    }
+
     if (statusReq->maxMem > jpbw->maxMem) {
         jpbw->maxMem = statusReq->maxMem;
     }
@@ -5259,6 +5270,7 @@ initJData (struct jShared  *shared)
     job->jobPid = -1;
     job->jobPGid = -1;
     job->cpuTime = 0.0;
+    job->idleFactor = INFINIT_FLOAT;
     job->endTime = 0;
     job->requeueTime = 0;
     job->retryHist = 0;
@@ -7263,6 +7275,14 @@ freeJData (struct jData *jpbw)
     if (JOB_PREEMPT_WAIT(jpbw))
         freeReservePreemptResources(jpbw);
 
+    /* Safety net: if the job is destroyed without a finish transition
+     * (zombie cleanup, badmin clean, ...), make sure it no longer counts
+     * towards qPtr->numIdleJobs. Idempotent with the updCounters path. */
+    if (jpbw->jFlags & JFLAG_COUNTED_IDLE) {
+        jpbw->jFlags &= ~JFLAG_COUNTED_IDLE;
+        jpbw->qPtr->numIdleJobs--;
+    }
+
     FREEUP (jpbw->userName);
     FREEUP (jpbw->lsfRusage);
     FREEUP (jpbw->reasonTb);
@@ -7870,8 +7890,277 @@ accumRunTime (struct jData *jData, int newStatus, time_t eventTime)
         }
     }
 
+    if (jData->runTime > 0 && (newStatus & JOB_STAT_RUN))
+        updIdleFactor(jData, jData->runTime);
+
     return;
 
+}
+
+static void
+updIdleFactor (struct jData *job, time_t runTime)
+{
+    int slots;
+    int idle;
+
+    if (job->qPtr->jobIdle == INFINIT_FLOAT) {
+        /* JOB_IDLE no longer configured on this queue (e.g. removed on
+         * reconfig): drop this job's stale contribution to the counter. */
+        if (job->jFlags & JFLAG_COUNTED_IDLE) {
+            job->jFlags &= ~JFLAG_COUNTED_IDLE;
+            job->qPtr->numIdleJobs--;
+        }
+        return;
+    }
+
+    slots = job->numHostPtr;
+    if (slots < 1)
+        slots = 1;
+    if (runTime <= 0)
+        return;
+
+    job->idleFactor = ((float)(job->runRusage.utime + job->runRusage.stime)
+                       / slots) / (float)runTime;
+
+    if (mSchedStage == M_STAGE_REPLAY)
+        return;
+
+    /* Idle job exception detection is gated by DETECT_IDLE_JOB_AFTER
+     * (configured in minutes in lsb.params). When undefined
+     * (INFINIT_INT), detection is disabled and the idleFactor is only
+     * computed for reporting. Otherwise the job must have run at least
+     * detectIdleJobAfter minutes before mbatchd checks it against the
+     * queue's JOB_IDLE threshold. */
+    if (detectIdleJobAfter == INFINIT_INT
+        || runTime < (time_t)detectIdleJobAfter * 60) {
+        if (job->jFlags & JFLAG_COUNTED_IDLE) {
+            job->jFlags &= ~JFLAG_COUNTED_IDLE;
+            job->qPtr->numIdleJobs--;
+        }
+        return;
+    }
+
+    /* Keep qp->numIdleJobs in sync with the jobs whose idleFactor is
+     * currently below the queue's JOB_IDLE threshold. The flag makes the
+     * update idempotent and lets the job-end paths (updCounters/freeJData)
+     * subtract exactly once. */
+    idle = (job->idleFactor < job->qPtr->jobIdle);
+    if (idle && !(job->jFlags & JFLAG_COUNTED_IDLE)) {
+        job->jFlags |= JFLAG_COUNTED_IDLE;
+        job->qPtr->numIdleJobs++;
+    } else if (!idle && (job->jFlags & JFLAG_COUNTED_IDLE)) {
+        job->jFlags &= ~JFLAG_COUNTED_IDLE;
+        job->qPtr->numIdleJobs--;
+    }
+}
+
+/*
+ * triggerEadmin()
+ *
+ * Called periodically from periodicCheck(). When idle jobs exist (their
+ * idle factor is below the queue's JOB_IDLE threshold) and
+ * EADMIN_TRIGGER_DURATION minutes have elapsed since the last trigger,
+ * forks a child process that:
+ *   - sets LSB_EXCEPTION=JOB_IDLE
+ *   - sets LSB_IDLE_JOBS="jobid idle_factor jobid idle_factor ..."
+ *   - sets LSB_JOB_IDLE_FACTOR=Y
+ *   - runs as the lsfadmin user (batchId)
+ *   - execs $LSF_SERVERDIR/eadmin
+ *
+ * If $LSF_SERVERDIR/eadmin does not exist or is not executable, the
+ * trigger is silently skipped. The parent does not wait for the child;
+ * reaping is handled by child_handler() (SIGCHLD).
+ *
+ * When EADMIN_TRIGGER_INTERVAL > 0, eadmin is invoked every
+ * EADMIN_TRIGGER_INTERVAL minutes regardless of whether idle jobs exist.
+ */
+void
+triggerEadmin(void)
+{
+    static char fname[] = "triggerEadmin";
+    static time_t lastEadminTrigger = 0;
+
+    char eadminPath[MAXPATHLEN];
+    struct qData *qp;
+    pid_t pid;
+
+    /*
+     * Step 1: DETECT_IDLE_JOB_AFTER must be configured for exception
+     * handling.
+     */
+    if (detectIdleJobAfter == INFINIT_INT)
+        return;
+
+    /*
+     * Step 2: If both EADMIN_TRIGGER_DURATION and EADMIN_TRIGGER_INTERVAL
+     * are 0, eadmin triggering is disabled entirely.
+     */
+    if (eadminTriggerDuration <= 0 && eadminTriggerInterval <= 0)
+        return;
+
+    /*
+     * Step 3: If EADMIN_TRIGGER_INTERVAL > 0, fire eadmin periodically
+     * regardless of whether idle jobs exist.
+     */
+    if (eadminTriggerInterval > 0) {
+        if (now - lastEadminTrigger
+            < (time_t)eadminTriggerInterval * 60)
+            return;
+
+        /* Interval period has arrived; check eadmin exists. */
+        if (daemonParams[LSF_SERVERDIR].paramValue == NULL)
+            return;
+        sprintf(eadminPath, "%s/eadmin",
+                daemonParams[LSF_SERVERDIR].paramValue);
+        if (access(eadminPath, X_OK) < 0)
+            return;
+
+        lastEadminTrigger = now;
+        goto fork_eadmin;
+    }
+
+    /*
+     * Step 4: Check EADMIN_TRIGGER_DURATION. Only trigger when there 
+     * are idle jobs and the duration period has arrived.
+     */
+    /* Check whether any queue has idle jobs (numIdleJobs > 0). */
+    for (qp = qDataList->forw; qp != qDataList; qp = qp->forw) {
+        if (qp->jobIdle == INFINIT_FLOAT)
+            continue;
+        if (qp->numIdleJobs > 0)
+            break;
+    }
+    if (qp == qDataList)
+        return;  /* no idle jobs */
+
+    /* Check if the EADMIN_TRIGGER_DURATION period has arrived. */
+    if (now - lastEadminTrigger
+        < (time_t)eadminTriggerDuration * 60)
+        return;
+
+    /* Duration period has arrived; check eadmin exists. */
+    if (daemonParams[LSF_SERVERDIR].paramValue == NULL)
+        return;
+    sprintf(eadminPath, "%s/eadmin", daemonParams[LSF_SERVERDIR].paramValue);
+    if (access(eadminPath, X_OK) < 0)
+        return;
+
+    lastEadminTrigger = now;
+
+fork_eadmin:
+    /*
+     * Fork a child process. The child collects idle jobs, builds the
+     * LSB_IDLE_JOBS environment variable (respecting ARG_MAX), sets the
+     * exception environment variables, and execs eadmin.
+     */
+    pid = fork();
+    if (pid < 0) {
+        ls_syslog(LOG_ERR, "%s: fork() failed: %m", fname);
+        return;
+    }
+
+    if (pid > 0) {
+        /* Parent: return. The child is reaped asynchronously by
+         * child_handler() (SIGCHLD). */
+        if (logclass & LC_TRACE)
+            ls_syslog(LOG_DEBUG,
+                      "%s: triggered eadmin (pid %d)", fname, (int)pid);
+        return;
+    }
+
+    /*
+     * Child process: collect idle jobs, build environment variables,
+     * then exec eadmin.
+     */
+    {
+        sigset_t newmask;
+        struct jData *jp;
+        char *idleJobsBuf;
+        size_t idleJobsBufSize;
+        size_t bufOffset;
+        long argMax;
+        char *eadminArgv[2];
+
+        sigemptyset(&newmask);
+        sigprocmask(SIG_SETMASK, &newmask, NULL);
+
+        /* Redirect stdin/stdout/stderr to /dev/null so eadmin does not
+         * inherit mbatchd's file descriptors. */
+        close(0);
+        close(1);
+        close(2);
+        open("/dev/null", O_RDONLY);
+        open("/dev/null", O_WRONLY);
+        open("/dev/null", O_WRONLY);
+
+        /*
+         * Build the LSB_IDLE_JOBS environment variable content:
+         * "jobid idle_factor jobid idle_factor ..."
+         *
+         * Respect the kernel's single-environment-variable size limit
+         * (ARG_MAX, typically 128KB); discard remaining jobids once the
+         * buffer would overflow.
+         */
+        argMax = sysconf(_SC_ARG_MAX);
+        if (argMax <= 0)
+            argMax = 128 * 1024;
+
+        idleJobsBufSize = (size_t)argMax;
+        idleJobsBuf = malloc(idleJobsBufSize);
+        if (idleJobsBuf == NULL)
+            _exit(-1);
+
+        idleJobsBuf[0] = '\0';
+        bufOffset = 0;
+
+        for (jp = jDataList[SJL]->forw;
+             jp != jDataList[SJL];
+             jp = jp->forw) {
+
+            char entry[64];
+            int entryLen;
+
+            if (!(jp->jFlags & JFLAG_COUNTED_IDLE))
+                continue;
+            if (jp->qPtr->jobIdle == INFINIT_FLOAT)
+                continue;
+
+            entryLen = snprintf(entry, sizeof(entry), "%s %.4f ",
+                                lsb_jobid2str(jp->jobId),
+                                jp->idleFactor);
+
+            if (entryLen < 0 || entryLen >= (int)sizeof(entry))
+                continue;
+
+            /* Leave room for the null terminator. */
+            if (bufOffset + (size_t)entryLen >= idleJobsBufSize - 1)
+                break;  /* discard remaining jobids */
+
+            strcpy(idleJobsBuf + bufOffset, entry);
+            bufOffset += entryLen;
+        }
+
+        /* Set the exception environment variables. */
+        putEnv("LSB_EXCEPTION", "JOB_IDLE");
+        putEnv("LSB_IDLE_JOBS", idleJobsBuf);
+        putEnv("LSB_JOB_IDLE_FACTOR", "Y");
+
+        /* Run as lsfadmin (the LSF administrator). */
+        if (lsfSetUid((uid_t)managerId) < 0) {
+            ls_syslog(LOG_ERR, "%s: lsfSetUid(%d) failed: %m",
+                      fname, managerId);
+            _exit(-1);
+        }
+
+        eadminArgv[0] = eadminPath;
+        eadminArgv[1] = NULL;
+
+        lsfExecv(eadminPath, eadminArgv);
+
+        /* If exec returns, it failed. */
+        ls_syslog(LOG_ERR, "%s: execv(%s) failed: %m", fname, eadminPath);
+        _exit(-1);
+    }
 }
 
 int

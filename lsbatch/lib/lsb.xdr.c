@@ -737,6 +737,12 @@ xdr_parameterInfo (XDR *xdrs, struct parameterInfo *paramInfo,
         return (FALSE);
     }
 
+    if (!(xdr_int(xdrs, &paramInfo->detectIdleJobAfter) &&
+          xdr_int(xdrs, &paramInfo->eadminTriggerDuration) &&
+          xdr_int(xdrs, &paramInfo->eadminTriggerInterval))) {
+        return (FALSE);
+    }
+
     return(TRUE);
 }
 
@@ -1119,6 +1125,10 @@ xdr_jobInfoReply (XDR *xdrs, struct jobInfoReply *jobInfoReply,
         }
     }
 
+    if (!xdr_float(xdrs, &jobInfoReply->idleFactor)) {
+        return (FALSE);
+    }
+
     return(TRUE);
 
 }
@@ -1348,10 +1358,11 @@ xdr_queueInfoEnt (XDR *xdrs, struct queueInfoEnt *qInfo,
         }
     }
 
-    if (!(xdr_float(xdrs, &qInfo->fsFactors.cpuTimeFactor) && 
+    if (!(xdr_float(xdrs, &qInfo->fsFactors.cpuTimeFactor) &&
           xdr_float(xdrs, &qInfo->fsFactors.runTimeFactor) &&
           xdr_float(xdrs, &qInfo->fsFactors.runJobFactor) &&
-          xdr_float(xdrs, &qInfo->fsFactors.histHours))) {
+          xdr_float(xdrs, &qInfo->fsFactors.histHours) &&
+          xdr_float(xdrs, &qInfo->jobIdle))) {
         return FALSE;
     }    
  

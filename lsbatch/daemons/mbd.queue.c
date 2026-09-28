@@ -432,6 +432,7 @@ checkQueues(struct infoReq*        queueInfoReqPtr,
             qRep->fsFactors.runTimeFactor = qp->fsFactors.runTimeFactor;
             qRep->fsFactors.runJobFactor = qp->fsFactors.runJobFactor;
             qRep->fsFactors.histHours = qp->fsFactors.histHours;
+            qRep->jobIdle = qp->jobIdle;
             if (qp->qAttrib & Q_ATTRIB_FS) {
                 qRep->userShares = qp->userShares;
                 addSAInfoTree(qRep, qp);

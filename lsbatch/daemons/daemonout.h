@@ -223,6 +223,7 @@ struct jobInfoReply {
     time_t    predictedStartTime;    
     time_t    endTime;
     float     cpuTime;
+    float     idleFactor;
     int       numToHosts;
     char      **toHosts;
     int       nIdx;                  

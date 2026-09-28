@@ -709,6 +709,7 @@ struct jobInfoEnt {
     time_t  predictedStartTime;
     time_t  endTime;
     float   cpuTime;
+    float   idleFactor;
     int     umask;
     char    *cwd;
     char    *subHomeDir;
@@ -828,6 +829,7 @@ struct queueInfoEnt {
     struct shareAcctInfoEnt *shareAcctTree;
     struct fsFactors fsFactors;
     char   *actionComment;
+    float  jobIdle;
 };
 
 struct shareAcctInfoEnt {
@@ -929,6 +931,9 @@ struct parameterInfo {
     float runTimeFactor;
     float runJobFactor;
     float histHours;
+    int  detectIdleJobAfter;
+    int  eadminTriggerDuration;
+    int  eadminTriggerInterval;
 };
 
 
